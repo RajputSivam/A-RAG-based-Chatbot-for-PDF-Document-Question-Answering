@@ -1,31 +1,58 @@
-# Domain Q&A Assistant — RAG Chatbot
+# Domain Q&A Assistant
 
-Upload PDFs into subject "domains" (e.g. `DBMS`, `Compiler-Design`) and ask
-questions answered via Retrieval-Augmented Generation, with every answer
-citing the exact source file and page it came from.
+A Retrieval-Augmented Generation (RAG) chatbot for answering questions from your own PDFs — organized by subject ("domain") — with every answer citing the exact source file and page it came from.
+
+Upload PDFs into a domain (e.g. `DBMS`, `Compiler-Design`), ask a question, and get an answer grounded strictly in that domain's documents, complete with numbered, clickable source citations.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [How the RAG Pipeline Works](#how-the-rag-pipeline-works)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Configuration Reference](#configuration-reference)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+
+---
+
+## Features
+
+- 📂 **Domain-scoped knowledge bases** — each subject gets its own isolated vector collection, so subjects never cross-contaminate.
+- 📄 **Drag-and-drop PDF ingestion** with automatic per-page text extraction.
+- 🔍 **Semantic retrieval** via local sentence-transformer embeddings — no external embedding API required.
+- 🧠 **LLM-generated answers** grounded in retrieved context, with automatic fallback between providers.
+- 🔗 **Verifiable citations** — every claim in an answer links back to a specific source file and page number.
+- 🚫 **Anti-hallucination guardrail** — the model is instructed to say "I don't know" rather than answer from general knowledge when the context is insufficient.
+
+---
 
 ## Architecture
 
 ```
-                         ┌─────────────────────────────┐
-                         │   React (Vite) Frontend      │
-                         │  - Drag/drop PDF upload      │
-                         │  - Chat UI + citations       │
-                         └───────────────┬─────────────┘
-                                         │ REST (axios)
-                                         ▼
-                         ┌─────────────────────────────┐
-                         │   FastAPI Backend             │
-                         │                               │
-  Upload flow:            │  POST /api/upload             │
-  PDF ──▶ pdfplumber ──▶ chunker.py ──▶ embeddings.py ──▶│──▶ ChromaDB
-  (per page)   (RecursiveCharacterTextSplitter) (MiniLM)  │   (per-domain
-                                                            │   collection,
-  Ask flow:                                                 │   persisted
-  question ──▶ embed query ──▶ vector_store.query() ◀──────┘   to disk)
+                         ┌───────────────────────────────┐
+                         │      React (Vite) Frontend      │
+                         │  • Drag/drop PDF upload          │
+                         │  • Chat UI with citations         │
+                         └────────────────┬─────────────────┘
+                                          │ REST (axios)
+                                          ▼
+                         ┌───────────────────────────────┐
+                         │        FastAPI Backend           │
+                         │                                   │
+  Upload flow:            │   POST /api/upload                │
+  PDF → pdfplumber → chunker.py → embeddings.py →│──▶ ChromaDB
+  (per page)      (RecursiveCharacterTextSplitter)  (MiniLM)  │   (per-domain
+                                                                │   collection,
+  Ask flow:                                                     │   persisted
+  question → embed query → vector_store.query() ◀───────────────┘   to disk)
                     │
                     ▼
-            top-k chunks + metadata
+            Top-K chunks + metadata
                     │
                     ▼
             llm.py builds numbered RAG prompt
@@ -35,45 +62,41 @@ citing the exact source file and page it came from.
          [falls back to Gemini if configured / on failure]
                     │
                     ▼
-      answer (cites [1][2]) + source chunks ──▶ POST /api/ask response
+      Answer (cites [1][2]) + source chunks → POST /api/ask response
 ```
 
-## How the RAG pipeline works
+---
 
-**1. Ingestion (`POST /api/upload`)**
-- `pdf_parser.py` extracts text **per page** using `pdfplumber` — page numbers
-  are tracked from the start so citations can point to an exact page later.
-- `chunker.py` splits each page's text with LangChain's
-  `RecursiveCharacterTextSplitter` (1000 chars, 150 overlap by default). This
-  splitter tries paragraph breaks, then sentences, then words before falling
-  back to a hard cut — keeping semantic units (a paragraph, a definition)
-  intact more often than a naive fixed-size slice, which improves retrieval
-  quality. Overlap ensures a sentence at a chunk boundary isn't orphaned.
-- `embeddings.py` turns each chunk into a 384-dim vector using
-  `all-MiniLM-L6-v2` (via `sentence-transformers`) — local, free, no API key,
-  fast enough on CPU for a college-scale document set.
-- `vector_store.py` stores the vectors + text + metadata (source file, page
-  number, chunk index) in a **ChromaDB collection dedicated to that domain**,
-  so subjects never cross-contaminate.
+## How the RAG Pipeline Works
 
-**2. Retrieval + Generation (`POST /api/ask`)**
-- The question is embedded with the same model (critical: query and document
-  embeddings must live in the same vector space).
-- ChromaDB returns the `top_k` most similar chunks (cosine similarity) from
-  the selected domain's collection only.
-- `llm.py` builds a prompt that presents each chunk as a **numbered
-  excerpt** with its source/page, and instructs the model to answer *only*
-  from that context and cite excerpt numbers — e.g. `[1]`. This is the
-  anti-hallucination guardrail: if the context doesn't answer the question,
-  the model is told to say so instead of guessing from general knowledge.
-- The backend maps `[1]`/`[2]`/etc. back to real `source_file` +
-  `page_number` and returns them alongside the answer, so the frontend can
-  render clickable/expandable source citations under each reply.
-- `LLM_PROVIDER` in `.env` picks Claude or Gemini; if the primary call fails
-  and the other provider's key is configured, one fallback attempt is made
-  automatically.
+### 1. Ingestion — `POST /api/upload`
 
-## Project structure
+| Stage | Component | Responsibility |
+|---|---|---|
+| Extraction | `pdf_parser.py` | Extracts text **per page** via `pdfplumber`, tracking page numbers from the start so citations can later point to an exact page. |
+| Chunking | `chunker.py` | Splits each page's text using LangChain's `RecursiveCharacterTextSplitter` (1000 chars, 150 overlap by default). The splitter prefers paragraph breaks, then sentences, then words, before falling back to a hard cut — preserving semantic units (a paragraph, a definition) more often than a naive fixed-size slice, and improving retrieval quality. Overlap prevents a boundary sentence from being orphaned. |
+| Embedding | `embeddings.py` | Converts each chunk into a 384-dimensional vector using `all-MiniLM-L6-v2` via `sentence-transformers` — local, free, no API key, and fast enough on CPU for a college-scale document set. |
+| Storage | `vector_store.py` | Persists vectors, text, and metadata (source file, page number, chunk index) to a **ChromaDB collection dedicated to that domain**. |
+
+### 2. Retrieval + Generation — `POST /api/ask`
+
+1. The question is embedded using the **same model** used for documents, ensuring query and document embeddings share a vector space.
+2. ChromaDB returns the `top_k` most similar chunks (cosine similarity) from the selected domain's collection only.
+3. `llm.py` constructs a prompt presenting each chunk as a **numbered excerpt** with its source and page, instructing the model to answer *only* from that context and cite excerpt numbers (e.g., `[1]`). This is the core anti-hallucination guardrail.
+4. The backend maps each citation marker back to its real `source_file` and `page_number`, returning them alongside the answer so the frontend can render expandable source citations.
+5. `LLM_PROVIDER` in `.env` selects Claude or Gemini as the primary provider; if the primary call fails and a secondary key is configured, one automatic fallback attempt is made.
+
+---
+
+## Tech Stack
+
+**Backend:** FastAPI · pydantic-settings · pdfplumber · LangChain (text splitting) · sentence-transformers · ChromaDB · Anthropic / Gemini APIs
+
+**Frontend:** React (Vite) · Axios
+
+---
+
+## Project Structure
 
 ```
 rag-qa-chatbot/
@@ -109,22 +132,28 @@ rag-qa-chatbot/
     └── .env.example
 ```
 
-## Setup (Windows / PowerShell)
+---
 
-> **Important:** create this project **outside any OneDrive-synced folder**
-> (e.g. `C:\dev\...`, not `C:\Users\<you>\OneDrive\...`) — OneDrive's live
-> sync can corrupt `node_modules` mid-install.
+## Getting Started
+
+> **Windows note:** Set up this project **outside any OneDrive-synced folder** (e.g. `C:\dev\...`, not `C:\Users\<you>\OneDrive\...`). OneDrive's live sync can corrupt `node_modules` mid-install.
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- An Anthropic API key (and/or a Gemini API key for fallback)
+
+### 1. Clone / Place the Project
 
 ```powershell
-# 1. Create a local, non-OneDrive working directory and move into it
 mkdir C:\dev
 cd C:\dev
-
-# 2. Copy/extract the rag-qa-chatbot folder here, then:
+# copy or extract the rag-qa-chatbot folder here
 cd C:\dev\rag-qa-chatbot
 ```
 
-### Backend
+### 2. Backend Setup
 
 ```powershell
 cd C:\dev\rag-qa-chatbot\backend
@@ -133,8 +162,7 @@ cd C:\dev\rag-qa-chatbot\backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 
-# If PowerShell blocks the activation script, run this once (as your user,
-# not admin) and retry:
+# If PowerShell blocks the activation script, run once (as your user, not admin):
 #   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 pip install -r requirements.txt
@@ -143,16 +171,15 @@ pip install -r requirements.txt
 copy .env.example .env
 notepad .env    # paste your ANTHROPIC_API_KEY
 
-# Run the server (first request will download the MiniLM model, ~80MB)
+# Start the server (first request downloads the MiniLM model, ~80MB)
 uvicorn app.main:app --reload --port 8000
 ```
 
-Visit `http://localhost:8000/docs` to see the interactive API docs and test
-endpoints directly.
+Interactive API docs: **http://localhost:8000/docs**
 
-### Frontend
+### 3. Frontend Setup
 
-Open a **second** PowerShell window (leave the backend running):
+Open a **second** terminal (leave the backend running):
 
 ```powershell
 cd C:\dev\rag-qa-chatbot\frontend
@@ -163,36 +190,48 @@ copy .env.example .env    # only needed if backend runs on a non-default URL
 npm run dev
 ```
 
-Visit `http://localhost:5173`.
+App: **http://localhost:5173**
 
-### Try it
+### 4. Try It Out
 
-1. In the sidebar, type a subject name (e.g. `DBMS`) and drop in a PDF.
+1. In the sidebar, enter a subject name (e.g. `DBMS`) and drop in a PDF.
 2. Wait for the "indexed" confirmation.
-3. Ask a question in the chat — the answer will cite `[1]`, `[2]`, etc.,
-   with expandable source excerpts and page numbers underneath.
+3. Ask a question in the chat — the answer will cite `[1]`, `[2]`, etc., with expandable source excerpts and page numbers underneath.
 
-## Configuration reference (`backend/.env`)
+---
 
-| Variable | Default | Meaning |
+## Configuration Reference
+
+`backend/.env`
+
+| Variable | Default | Description |
 |---|---|---|
 | `LLM_PROVIDER` | `claude` | `claude` or `gemini` |
-| `ANTHROPIC_API_KEY` | — | required if provider is `claude` |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model id |
-| `GEMINI_API_KEY` | — | optional fallback provider |
-| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | local sentence-transformers model |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | chunking parameters |
-| `TOP_K` | `4` | chunks retrieved per question |
+| `ANTHROPIC_API_KEY` | — | Required if provider is `claude` |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model ID |
+| `GEMINI_API_KEY` | — | Optional fallback provider |
+| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformers model |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Chunking parameters |
+| `TOP_K` | `4` | Chunks retrieved per question |
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | ChromaDB storage path |
-| `MAX_UPLOAD_MB` | `25` | upload size cap |
+| `MAX_UPLOAD_MB` | `25` | Upload size cap |
 
-## Known limitations (good interview talking points)
+---
 
-- Scanned/image-only PDFs aren't handled — `pdfplumber` needs a text layer;
-  OCR (e.g. `pytesseract`) would be the next step.
-- Retrieval is pure vector similarity (no re-ranking or hybrid BM25+vector
-  search yet) — fine for a college-scale corpus, but a larger corpus would
-  benefit from a re-ranker.
-- No conversation memory in the RAG prompt yet — each question is answered
-  independently of prior chat turns; adding a condensed chat history to the
-  prompt would enable follow-up questions like "what about the second one?".
+## Known Limitations
+
+- **Scanned/image-only PDFs are not supported** — `pdfplumber` requires a text layer; OCR (e.g. `pytesseract`) would be the natural next step.
+- **Pure vector similarity retrieval** — no re-ranking or hybrid BM25 + vector search yet. Sufficient for a college-scale corpus, but a larger corpus would benefit from a re-ranker.
+- **No conversation memory** — each question is answered independently of prior chat turns.
+
+## Roadmap
+
+- [ ] OCR support for scanned PDFs
+- [ ] Hybrid BM25 + vector retrieval with re-ranking
+- [ ] Condensed chat history in the RAG prompt to support follow-up questions (e.g., "what about the second one?")
+
+---
+
+## License
+
+Specify a license (e.g., MIT) here.
