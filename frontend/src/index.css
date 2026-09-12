@@ -1,0 +1,61 @@
+/* Design direction: a study-desk, not a SaaS dashboard.
+   Palette pulls from library reading rooms -- ink navy, aged paper,
+   a single warm brass accent reserved for citations/sources (the thing
+   that makes this tool trustworthy: you can always see where an answer
+   came from). Serif for headings (bookish, academic), plain sans for
+   UI chrome and body text so it stays legible at chat-message sizes. */
+
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --ink: #1b2430;
+  --ink-soft: #454f5e;
+  --paper: #f7f4ee;
+  --paper-raised: #ffffff;
+  --rule: #dcd5c4;
+  --navy: #253a52;
+  --navy-deep: #16222f;
+  --brass: #a97a3f;
+  --brass-soft: #f1e6d3;
+  --error: #a3402f;
+
+  --font-serif: 'Source Serif 4', Georgia, serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--brass-soft);
+}
+
+/* Visible keyboard focus everywhere, per accessibility floor */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

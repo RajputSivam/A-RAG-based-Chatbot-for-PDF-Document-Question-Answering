@@ -1,0 +1,23 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# RAG / LangChain (text splitting comes from the standalone package;
+# `langchain` itself is kept for prompt templates / future orchestration)
+langchain==1.4.0
+langchain-text-splitters==1.1.2
+
+# Vector store
+chromadb==1.5.9
+
+# Embeddings (local, free -- pulls in torch, first install is a few hundred MB)
+sentence-transformers==3.1.1
+
+# PDF parsing
+pdfplumber==0.11.10
+
+# LLM providers
+anthropic==1.5.0
+google-generativeai==0.8.6
